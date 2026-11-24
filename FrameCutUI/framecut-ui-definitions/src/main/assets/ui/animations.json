@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "2.0.0",
+  "animations": {
+    "statusBadgeColorMs": 220,
+    "statusBadgeContainerMs": 220,
+    "recordingDotPulseMs": 750,
+    "regionBorderDashMs": 900,
+    "regionBorderPhaseSteps": 12,
+    "bannerEnterMs": 180,
+    "bannerExitMs": 160
+  }
+}

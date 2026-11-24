@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "2.0.0",
+  "startDestination": "main",
+  "screens": [
+    {
+      "id": "screen_main",
+      "route": "main",
+      "compactMaxWidthDp": 820,
+      "expandedBreakpointDp": 840,
+      "expandedMaxWidthDp": 1280
+    },
+    {
+      "id": "screen_settings",
+      "route": "settings",
+      "compactMaxWidthDp": 760,
+      "expandedBreakpointDp": 780,
+      "expandedMaxWidthDp": 1120
+    },
+    {
+      "id": "screen_recordings",
+      "route": "recordings",
+      "compactMaxWidthDp": 680,
+      "expandedBreakpointDp": 700,
+      "expandedMaxWidthDp": 1240
+    },
+    {
+      "id": "screen_crop",
+      "route": "crop",
+      "compactMaxWidthDp": 760,
+      "expandedBreakpointDp": 840,
+      "expandedMaxWidthDp": 960
+    }
+  ]
+}

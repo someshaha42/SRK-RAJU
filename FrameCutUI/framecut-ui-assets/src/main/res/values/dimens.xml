@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="min_touch_target">48dp</dimen>
+    <dimen name="button_primary_height">56dp</dimen>
+    <dimen name="button_secondary_height">54dp</dimen>
+    <dimen name="button_library_height">52dp</dimen>
+    <dimen name="brand_badge_size">30dp</dimen>
+    <dimen name="recording_thumb_size">52dp</dimen>
+    <dimen name="empty_state_icon_box">72dp</dimen>
+    <dimen name="region_preview_width">74dp</dimen>
+    <dimen name="resize_handle_touch">48dp</dimen>
+    <dimen name="resize_handle_dot">16dp</dimen>
+    <dimen name="radius_card">20dp</dimen>
+    <dimen name="radius_console">24dp</dimen>
+    <dimen name="space_md">12dp</dimen>
+    <dimen name="space_xl">16dp</dimen>
+</resources>

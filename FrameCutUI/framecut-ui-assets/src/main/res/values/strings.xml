@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FrameCut</string>
+    <string name="status_ready">Ready to record</string>
+    <string name="status_recording">Recording</string>
+    <string name="status_paused">Paused</string>
+    <string name="status_saving">Finalizing MP4…</string>
+    <string name="action_record">Record</string>
+    <string name="action_stop">Stop</string>
+    <string name="action_pause">Pause</string>
+    <string name="action_resume">Resume</string>
+    <string name="action_recordings">Recordings</string>
+    <string name="action_adjust_region">Adjust Region</string>
+    <string name="action_confirm_region">Confirm Region</string>
+    <string name="action_close">Close</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_play">Play</string>
+    <string name="action_share">Share</string>
+    <string name="settings_title">Encoding Settings</string>
+    <string name="settings_subtitle">H.265/HEVC Hardware Surface Pipeline</string>
+    <string name="settings_locked_notice">Stop active recording to change pipeline settings.</string>
+    <string name="recordings_title">Recorded Videos</string>
+    <string name="recordings_empty_title">No recordings yet</string>
+    <string name="recordings_empty_subtitle">Captured MP4 videos will appear here ready to play or share.</string>
+    <string name="crop_tool_title">Media Crop Tool</string>
+    <string name="crop_tool_subtitle">Universal Photo &amp; Video Crop</string>
+</resources>

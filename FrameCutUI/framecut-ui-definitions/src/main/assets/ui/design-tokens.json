@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "2.0.0",
+  "themes": {
+    "studio_dark": {
+      "background": "#FF0D0F14",
+      "surface": "#FF151821",
+      "surfaceVariant": "#FF1E2330",
+      "outline": "#FF2D3446",
+      "primary": "#FFDC2626",
+      "secondary": "#FF60A5FA",
+      "tertiary": "#FF10B981"
+    },
+    "studio_light": {
+      "background": "#FFF6F7FA",
+      "surface": "#FFFFFFFF",
+      "surfaceVariant": "#FFECEFF5",
+      "outline": "#FFD1D8E4",
+      "primary": "#FFB91C1C",
+      "secondary": "#FF2563EB",
+      "tertiary": "#FF059669"
+    }
+  }
+}

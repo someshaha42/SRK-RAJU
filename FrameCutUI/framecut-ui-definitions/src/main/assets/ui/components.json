@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "2.0.0",
+  "components": [
+    { "id": "toolbar_main", "type": "toolbar", "parentId": "screen_main" },
+    { "id": "panel_recording_console", "type": "panel", "parentId": "screen_main" },
+    { "id": "btn_record", "type": "button", "parentId": "panel_recording_console", "testTag": "btn_record" },
+    { "id": "btn_pause_resume", "type": "button", "parentId": "panel_recording_console", "testTag": "btn_pause_resume" },
+    { "id": "btn_stop", "type": "button", "parentId": "panel_recording_console", "testTag": "btn_stop" },
+    { "id": "panel_recording_mode", "type": "panel", "parentId": "panel_settings_grid" },
+    { "id": "panel_region_preview", "type": "panel", "parentId": "panel_settings_grid" },
+    { "id": "panel_orientation_mode", "type": "panel", "parentId": "panel_settings_grid" },
+    { "id": "panel_audio_source", "type": "panel", "parentId": "panel_settings_grid" },
+    { "id": "panel_video_bitrate", "type": "panel", "parentId": "panel_settings_grid" },
+    { "id": "panel_region_animation", "type": "panel", "parentId": "panel_settings_grid" },
+    { "id": "panel_region_hud", "type": "panel", "parentId": "overlay_region_selector" }
+  ]
+}

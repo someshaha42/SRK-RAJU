@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "2.0.0",
+  "interactions": {
+    "idleContentAlpha": 1.0,
+    "lockedContentAlpha": 0.52,
+    "overlayHudSurfaceAlpha": 0.94,
+    "minRegionSpanFraction": 0.12,
+    "aspectFitWidthCap": 0.90,
+    "aspectFitHeightCap": 0.78,
+    "hudTopDockBottomThreshold": 0.72,
+    "hudTopDockTopThreshold": 0.25
+  }
+}
