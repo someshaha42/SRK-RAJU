@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import com.framecut.ui.definitions.UiAnimationDefinitions
 import com.framecut.ui.theme.FrameCutDimens
 import com.framecut.ui.theme.FrameCutShapes
