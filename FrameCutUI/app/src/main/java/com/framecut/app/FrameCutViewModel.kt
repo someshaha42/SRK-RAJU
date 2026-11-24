@@ -4,6 +4,8 @@ import android.app.Application
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -12,6 +14,7 @@ import com.framecut.ui.core.AudioSourceOption
 import com.framecut.ui.core.BitrateModeOption
 import com.framecut.ui.core.ColorDepthOption
 import com.framecut.ui.core.ColorRangeOption
+import com.framecut.ui.core.CropMediaState
 import com.framecut.ui.core.FrameCutUiState
 import com.framecut.ui.core.GopIntervalOption
 import com.framecut.ui.core.NormalizedRegion
@@ -43,6 +46,9 @@ class FrameCutViewModel(application: Application) : AndroidViewModel(application
         ),
     )
     val uiState: StateFlow<FrameCutUiState> = _uiState.asStateFlow()
+
+    private val _cropPreviewBitmap = MutableStateFlow<ImageBitmap?>(null)
+    val cropPreviewBitmap: StateFlow<ImageBitmap?> = _cropPreviewBitmap.asStateFlow()
 
     private var selectedCropUri: Uri? = null
 
@@ -238,7 +244,43 @@ class FrameCutViewModel(application: Application) : AndroidViewModel(application
 
     fun setSelectedCropUri(uri: Uri) {
         selectedCropUri = uri
-        notifyInfo("Loaded media ready to crop and export.")
+        viewModelScope.launch {
+            runCatching {
+                cropEngine.loadMediaPreview(uri)
+            }.onSuccess { loaded ->
+                _cropPreviewBitmap.value = loaded.previewBitmap?.asImageBitmap()
+                _uiState.update { state ->
+                    state.copy(
+                        cropMedia = CropMediaState(
+                            displayName = loaded.displayName,
+                            isVideo = loaded.isVideo,
+                            mediaWidth = loaded.width,
+                            mediaHeight = loaded.height,
+                            durationMs = loaded.durationMs,
+                            isExporting = false,
+                            statusMessage = "Loaded ${loaded.displayName} (${loaded.width}×${loaded.height}).",
+                            statusIsError = false,
+                        ),
+                    )
+                }
+            }.onFailure { err ->
+                _cropPreviewBitmap.value = null
+                _uiState.update { state ->
+                    state.copy(
+                        cropMedia = CropMediaState(
+                            statusMessage = "Unable to load media: ${err.message ?: "Unsupported file"}",
+                            statusIsError = true,
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    fun dismissCropStatus() {
+        _uiState.update { state ->
+            state.copy(cropMedia = state.cropMedia.copy(statusMessage = null, statusIsError = false))
+        }
     }
 
     fun exportCroppedMedia(
@@ -249,17 +291,50 @@ class FrameCutViewModel(application: Application) : AndroidViewModel(application
     ) {
         val uri = selectedCropUri
         if (uri == null) {
-            onCompleted("Pick a photo or video first using Pick Media or Browse Files.")
+            val msg = "Pick a photo or video first using Pick Media or Browse Files."
+            _uiState.update { state ->
+                state.copy(cropMedia = state.cropMedia.copy(statusMessage = msg, statusIsError = true))
+            }
+            onCompleted(msg)
             return
         }
+        if (_uiState.value.cropMedia.isExporting) return
 
         viewModelScope.launch {
+            _uiState.update { state ->
+                state.copy(
+                    cropMedia = state.cropMedia.copy(
+                        isExporting = true,
+                        statusMessage = null,
+                        statusIsError = false,
+                    ),
+                )
+            }
             runCatching {
                 cropEngine.exportMedia(uri, region, qualityPercent, preserveMetadata)
             }.onSuccess { result ->
+                _uiState.update { state ->
+                    state.copy(
+                        cropMedia = state.cropMedia.copy(
+                            isExporting = false,
+                            statusMessage = result.summary,
+                            statusIsError = false,
+                        ),
+                    )
+                }
                 onCompleted(result.summary)
             }.onFailure { err ->
-                onCompleted("Export failed: ${err.message ?: "Unknown error"}")
+                val msg = "Export failed: ${err.message ?: "Unknown error"}"
+                _uiState.update { state ->
+                    state.copy(
+                        cropMedia = state.cropMedia.copy(
+                            isExporting = false,
+                            statusMessage = msg,
+                            statusIsError = true,
+                        ),
+                    )
+                }
+                onCompleted(msg)
             }
         }
     }

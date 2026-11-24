@@ -19,6 +19,7 @@ import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.View
 import android.view.WindowManager
@@ -48,9 +49,11 @@ class ScreenRecordService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var captureEngine: ScreenCaptureEngine? = null
     private var timerJob: Job? = null
-    private var overlayView: View? = null
+    private var overlayView: RegionOverlayBorderView? = null
 
     private var elapsedMillis: Long = 0L
+    private var accumulatedActiveMs: Long = 0L
+    private var activeSegmentStartMs: Long = 0L
     private var currentPhase: RecordingPhase = RecordingPhase.IDLE
     private var resolutionLabel: String = ""
     private var audioLabel: String = ""
@@ -86,6 +89,8 @@ class ScreenRecordService : Service() {
 
         val settings = SettingsRepository(this).load()
         elapsedMillis = 0L
+        accumulatedActiveMs = 0L
+        activeSegmentStartMs = SystemClock.elapsedRealtime()
         currentPhase = RecordingPhase.RECORDING
         audioLabel = if (settings.audioSource == AudioSourceOption.INTERNAL) "Internal Audio" else "Microphone"
         resolutionLabel = if (settings.recordingMode == RecordingMode.FULL_SCREEN) "Full Screen" else "Region"
@@ -123,6 +128,7 @@ class ScreenRecordService : Service() {
                 withContext(Dispatchers.Main.immediate) {
                     resolutionLabel = res
                     audioLabel = aud
+                    activeSegmentStartMs = SystemClock.elapsedRealtime()
                     RecordingController.updateSession {
                         RecordingSessionState(
                             phase = RecordingPhase.RECORDING,
@@ -143,6 +149,7 @@ class ScreenRecordService : Service() {
                 }
             } catch (t: Throwable) {
                 withContext(Dispatchers.Main.immediate) {
+                    currentPhase = RecordingPhase.IDLE
                     RecordingController.setError("Capture failed: ${t.message ?: t::class.java.simpleName}")
                     removeRegionOverlay()
                     stopForegroundAndFinish()
@@ -153,18 +160,24 @@ class ScreenRecordService : Service() {
 
     private fun pauseCapture() {
         if (currentPhase != RecordingPhase.RECORDING) return
+        accumulatedActiveMs += (SystemClock.elapsedRealtime() - activeSegmentStartMs).coerceAtLeast(0L)
+        elapsedMillis = accumulatedActiveMs
         captureEngine?.pause()
         currentPhase = RecordingPhase.PAUSED
         timerJob?.cancel()
         timerJob = null
+        overlayView?.setAnimating(false)
+        RecordingController.setElapsedMillis(elapsedMillis)
         RecordingController.setPhase(RecordingPhase.PAUSED)
         updateNotification()
     }
 
     private fun resumeCapture() {
         if (currentPhase != RecordingPhase.PAUSED) return
+        activeSegmentStartMs = SystemClock.elapsedRealtime()
         captureEngine?.resume()
         currentPhase = RecordingPhase.RECORDING
+        overlayView?.setAnimating(true)
         RecordingController.setPhase(RecordingPhase.RECORDING)
         startTimerLoop()
         updateNotification()
@@ -237,15 +250,11 @@ class ScreenRecordService : Service() {
     private fun startTimerLoop() {
         timerJob?.cancel()
         timerJob = serviceScope.launch {
-            var tickCount = 0
             while (isActive && currentPhase == RecordingPhase.RECORDING) {
-                delay(250L)
-                elapsedMillis += 250L
+                delay(500L)
+                elapsedMillis = accumulatedActiveMs +
+                    (SystemClock.elapsedRealtime() - activeSegmentStartMs).coerceAtLeast(0L)
                 RecordingController.setElapsedMillis(elapsedMillis)
-                tickCount++
-                if (tickCount % 4 == 0) {
-                    updateNotification()
-                }
             }
         }
     }
@@ -262,7 +271,7 @@ class ScreenRecordService : Service() {
 
         val formattedTime = formatTimer(elapsedMillis)
         val title = when (currentPhase) {
-            RecordingPhase.RECORDING -> "Recording • $formattedTime"
+            RecordingPhase.RECORDING -> "Recording Screen"
             RecordingPhase.PAUSED -> "Paused • $formattedTime"
             RecordingPhase.FINALIZING -> "Finalizing MP4…"
             RecordingPhase.IDLE -> "FrameCut Ready"
@@ -282,11 +291,14 @@ class ScreenRecordService : Service() {
             .setPriority(NotificationCompat.PRIORITY_LOW)
 
         if (currentPhase == RecordingPhase.RECORDING) {
+            builder.setUsesChronometer(true)
+            builder.setWhen(System.currentTimeMillis() - elapsedMillis)
             val pausePi = serviceActionPendingIntent(ACTION_PAUSE, REQ_PAUSE)
             val stopPi = serviceActionPendingIntent(ACTION_STOP, REQ_STOP)
             builder.addAction(0, "Pause", pausePi)
             builder.addAction(0, "Stop", stopPi)
         } else if (currentPhase == RecordingPhase.PAUSED) {
+            builder.setUsesChronometer(false)
             val resumePi = serviceActionPendingIntent(ACTION_RESUME, REQ_RESUME)
             val stopPi = serviceActionPendingIntent(ACTION_STOP, REQ_STOP)
             builder.addAction(0, "Resume", resumePi)
@@ -388,6 +400,7 @@ class ScreenRecordService : Service() {
             windowType,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT,
@@ -403,6 +416,7 @@ class ScreenRecordService : Service() {
     private fun removeRegionOverlay() {
         val view = overlayView ?: return
         overlayView = null
+        view.setAnimating(false)
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         runCatching { wm.removeView(view) }
     }
@@ -426,6 +440,10 @@ class ScreenRecordService : Service() {
     ) : View(context) {
         private val density = resources.displayMetrics.density
         private var phase = 0f
+        private var animating = true
+
+        private val dashIntervals = floatArrayOf(10f * density, 6f * density)
+        private val dashPeriod = 16f * density
 
         private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
@@ -439,19 +457,41 @@ class ScreenRecordService : Service() {
             strokeWidth = 2.5f * density
         }
 
+        fun setAnimating(enabled: Boolean) {
+            if (animating == enabled) return
+            animating = enabled
+            if (enabled) {
+                postInvalidateDelayed(ANIM_FRAME_INTERVAL_MS)
+            }
+        }
+
+        override fun onDetachedFromWindow() {
+            animating = false
+            super.onDetachedFromWindow()
+        }
+
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            val l = region.left * width
-            val t = region.top * height
-            val r = region.right * width
-            val b = region.bottom * height
+            // Position border & shadow strictly OUTSIDE the captured region rectangle
+            // so zero overlay pixels bleed into cropped MediaProjection frames.
+            val outset = (shadowPaint.strokeWidth / 2f) + (2f * density)
+            val l = (region.left * width) - outset
+            val t = (region.top * height) - outset
+            val r = (region.right * width) + outset
+            val b = (region.bottom * height) + outset
 
             canvas.drawRect(l, t, r, b, shadowPaint)
-            borderPaint.pathEffect = DashPathEffect(floatArrayOf(10f * density, 6f * density), phase)
+            borderPaint.pathEffect = DashPathEffect(dashIntervals, phase)
             canvas.drawRect(l, t, r, b, borderPaint)
 
-            phase = (phase - 1.5f * density) % (16f * density)
-            postInvalidateOnAnimation()
+            if (animating) {
+                phase = (phase - 2.0f * density) % dashPeriod
+                postInvalidateDelayed(ANIM_FRAME_INTERVAL_MS)
+            }
+        }
+
+        companion object {
+            private const val ANIM_FRAME_INTERVAL_MS = 66L // ~15 FPS saves GPU & prevents game frame drops
         }
     }
 

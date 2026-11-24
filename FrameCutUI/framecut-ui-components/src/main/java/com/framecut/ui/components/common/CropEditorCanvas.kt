@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,6 +52,8 @@ fun CropEditorCanvas(
     var boxWidthPx by remember { mutableFloatStateOf(1f) }
     var boxHeightPx by remember { mutableFloatStateOf(1f) }
     val halfTouchPx = with(density) { FrameCutDimens.ResizeHandleTouchSize.toPx() / 2f }
+    val currentCropRect by rememberUpdatedState(cropRect)
+    val currentOnCropRectChange by rememberUpdatedState(onCropRectChange)
 
     Box(
         modifier = modifier
@@ -93,17 +96,18 @@ fun CropEditorCanvas(
                 modifier = Modifier
                     .offset { IntOffset(((lPx + rPx) / 2f - halfTouchPx).roundToInt(), ((tPx + bPx) / 2f - halfTouchPx).roundToInt()) }
                     .size(FrameCutDimens.ResizeHandleTouchSize)
-                    .pointerInput(enabled, cropRect, boxWidthPx, boxHeightPx) {
+                    .pointerInput(enabled, boxWidthPx, boxHeightPx) {
                         if (!enabled) return@pointerInput
                         detectDragGestures { change, drag ->
                             change.consume()
+                            val rect = currentCropRect
                             val dx = drag.x / boxWidthPx
                             val dy = drag.y / boxHeightPx
-                            val wf = cropRect.right - cropRect.left
-                            val hf = cropRect.bottom - cropRect.top
-                            val nl = (cropRect.left + dx).coerceIn(0f, 1f - wf)
-                            val nt = (cropRect.top + dy).coerceIn(0f, 1f - hf)
-                            onCropRectChange(NormalizedRegion(nl, nt, nl + wf, nt + hf))
+                            val wf = rect.right - rect.left
+                            val hf = rect.bottom - rect.top
+                            val nl = (rect.left + dx).coerceIn(0f, 1f - wf)
+                            val nt = (rect.top + dy).coerceIn(0f, 1f - hf)
+                            currentOnCropRectChange(NormalizedRegion(nl, nt, nl + wf, nt + hf))
                         }
                     },
                 contentAlignment = Alignment.Center,
@@ -120,41 +124,45 @@ fun CropEditorCanvas(
             CropHandleDot(
                 xPx = lPx - halfTouchPx,
                 yPx = tPx - halfTouchPx,
+                enabled = enabled,
                 onDrag = { dxPx, dyPx ->
-                    if (!enabled) return@CropHandleDot
-                    val nl = (cropRect.left + dxPx / boxWidthPx).coerceIn(0f, cropRect.right - minSpan)
-                    val nt = (cropRect.top + dyPx / boxHeightPx).coerceIn(0f, cropRect.bottom - minSpan)
-                    onCropRectChange(cropRect.copy(left = nl, top = nt))
+                    val rect = currentCropRect
+                    val nl = (rect.left + dxPx / boxWidthPx).coerceIn(0f, rect.right - minSpan)
+                    val nt = (rect.top + dyPx / boxHeightPx).coerceIn(0f, rect.bottom - minSpan)
+                    currentOnCropRectChange(rect.copy(left = nl, top = nt))
                 },
             )
             CropHandleDot(
                 xPx = rPx - halfTouchPx,
                 yPx = tPx - halfTouchPx,
+                enabled = enabled,
                 onDrag = { dxPx, dyPx ->
-                    if (!enabled) return@CropHandleDot
-                    val nr = (cropRect.right + dxPx / boxWidthPx).coerceIn(cropRect.left + minSpan, 1f)
-                    val nt = (cropRect.top + dyPx / boxHeightPx).coerceIn(0f, cropRect.bottom - minSpan)
-                    onCropRectChange(cropRect.copy(right = nr, top = nt))
+                    val rect = currentCropRect
+                    val nr = (rect.right + dxPx / boxWidthPx).coerceIn(rect.left + minSpan, 1f)
+                    val nt = (rect.top + dyPx / boxHeightPx).coerceIn(0f, rect.bottom - minSpan)
+                    currentOnCropRectChange(rect.copy(right = nr, top = nt))
                 },
             )
             CropHandleDot(
                 xPx = lPx - halfTouchPx,
                 yPx = bPx - halfTouchPx,
+                enabled = enabled,
                 onDrag = { dxPx, dyPx ->
-                    if (!enabled) return@CropHandleDot
-                    val nl = (cropRect.left + dxPx / boxWidthPx).coerceIn(0f, cropRect.right - minSpan)
-                    val nb = (cropRect.bottom + dyPx / boxHeightPx).coerceIn(cropRect.top + minSpan, 1f)
-                    onCropRectChange(cropRect.copy(left = nl, bottom = nb))
+                    val rect = currentCropRect
+                    val nl = (rect.left + dxPx / boxWidthPx).coerceIn(0f, rect.right - minSpan)
+                    val nb = (rect.bottom + dyPx / boxHeightPx).coerceIn(rect.top + minSpan, 1f)
+                    currentOnCropRectChange(rect.copy(left = nl, bottom = nb))
                 },
             )
             CropHandleDot(
                 xPx = rPx - halfTouchPx,
                 yPx = bPx - halfTouchPx,
+                enabled = enabled,
                 onDrag = { dxPx, dyPx ->
-                    if (!enabled) return@CropHandleDot
-                    val nr = (cropRect.right + dxPx / boxWidthPx).coerceIn(cropRect.left + minSpan, 1f)
-                    val nb = (cropRect.bottom + dyPx / boxHeightPx).coerceIn(cropRect.top + minSpan, 1f)
-                    onCropRectChange(cropRect.copy(right = nr, bottom = nb))
+                    val rect = currentCropRect
+                    val nr = (rect.right + dxPx / boxWidthPx).coerceIn(rect.left + minSpan, 1f)
+                    val nb = (rect.bottom + dyPx / boxHeightPx).coerceIn(rect.top + minSpan, 1f)
+                    currentOnCropRectChange(rect.copy(right = nr, bottom = nb))
                 },
             )
         }
@@ -165,17 +173,20 @@ fun CropEditorCanvas(
 private fun CropHandleDot(
     xPx: Float,
     yPx: Float,
+    enabled: Boolean,
     onDrag: (Float, Float) -> Unit,
 ) {
     val studioColors = LocalStudioColors.current
+    val currentOnDrag by rememberUpdatedState(onDrag)
     Box(
         modifier = Modifier
             .offset { IntOffset(xPx.roundToInt(), yPx.roundToInt()) }
             .size(FrameCutDimens.ResizeHandleTouchSize)
-            .pointerInput(Unit) {
+            .pointerInput(enabled) {
+                if (!enabled) return@pointerInput
                 detectDragGestures { change, drag ->
                     change.consume()
-                    onDrag(drag.x, drag.y)
+                    currentOnDrag(drag.x, drag.y)
                 }
             },
         contentAlignment = Alignment.Center,

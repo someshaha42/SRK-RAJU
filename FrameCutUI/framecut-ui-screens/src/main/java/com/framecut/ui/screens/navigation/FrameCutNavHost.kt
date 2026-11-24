@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -67,6 +68,7 @@ data class FrameCutScreenCallbacks(
     val onPickCropMedia: (CropMediaCategory) -> Unit = {},
     val onBrowseCropFile: () -> Unit = {},
     val onExportCropped: (NormalizedRegion, Int, Boolean) -> Unit = { _, _, _ -> },
+    val onDismissCropStatus: () -> Unit = {},
 )
 
 @Composable
@@ -75,6 +77,7 @@ fun FrameCutNavHost(
     isDarkTheme: Boolean,
     callbacks: FrameCutScreenCallbacks,
     modifier: Modifier = Modifier,
+    cropPreviewBitmap: ImageBitmap? = null,
     navController: NavHostController = rememberNavController(),
 ) {
     var showRegionOverlay by remember { mutableStateOf(false) }
@@ -155,9 +158,12 @@ fun FrameCutNavHost(
             composable(UiConstants.Routes.CROP) {
                 CropToolScreen(
                     onBack = { navController.popBackStack() },
+                    cropMedia = uiState.cropMedia,
+                    cropPreviewBitmap = cropPreviewBitmap,
                     onPickMedia = callbacks.onPickCropMedia,
                     onBrowseAnyFile = callbacks.onBrowseCropFile,
                     onExportCropped = callbacks.onExportCropped,
+                    onDismissStatus = callbacks.onDismissCropStatus,
                 )
             }
         }

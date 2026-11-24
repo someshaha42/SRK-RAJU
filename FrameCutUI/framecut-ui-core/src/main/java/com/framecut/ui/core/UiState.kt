@@ -27,6 +27,28 @@ data class RecorderDrafts(
 )
 
 @Immutable
+data class CropMediaState(
+    val displayName: String? = null,
+    val isVideo: Boolean = false,
+    val mediaWidth: Int = 0,
+    val mediaHeight: Int = 0,
+    val durationMs: Long = 0L,
+    val isExporting: Boolean = false,
+    val statusMessage: String? = null,
+    val statusIsError: Boolean = false,
+) {
+    val hasMedia: Boolean
+        get() = !displayName.isNullOrBlank() && mediaWidth > 0 && mediaHeight > 0
+
+    val aspectRatio: Float
+        get() = if (mediaWidth > 0 && mediaHeight > 0) {
+            (mediaWidth.toFloat() / mediaHeight.toFloat()).coerceIn(0.35f, 2.5f)
+        } else {
+            16f / 9f
+        }
+}
+
+@Immutable
 data class FrameCutUiState(
     val settings: RecordingSettings = RecordingSettings(),
     val session: RecordingSessionState = RecordingSessionState(),
@@ -35,6 +57,7 @@ data class FrameCutUiState(
     val hasOverlayPermission: Boolean = false,
     val recoveryNotice: String? = null,
     val drafts: RecorderDrafts = RecorderDrafts(),
+    val cropMedia: CropMediaState = CropMediaState(),
 ) {
     val canvasWidthPx: Int
         get() = if (settings.orientationMode == OrientationMode.PORTRAIT) {

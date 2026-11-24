@@ -106,6 +106,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+            val cropPreviewBitmap by viewModel.cropPreviewBitmap.collectAsStateWithLifecycle()
             val systemDark = isSystemInDarkTheme()
             val isDarkTheme = uiState.settings.darkThemeOverride ?: systemDark
             var activePlayerItem by remember { mutableStateOf<RecordedVideoItem?>(null) }
@@ -165,6 +166,7 @@ class MainActivity : ComponentActivity() {
                             Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
                         }
                     },
+                    onDismissCropStatus = viewModel::dismissCropStatus,
                 )
             }
 
@@ -173,6 +175,7 @@ class MainActivity : ComponentActivity() {
                     uiState = uiState,
                     isDarkTheme = isDarkTheme,
                     callbacks = callbacks,
+                    cropPreviewBitmap = cropPreviewBitmap,
                 )
 
                 activePlayerItem?.let { item ->

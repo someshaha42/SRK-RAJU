@@ -10,6 +10,8 @@ import android.opengl.EGLSurface
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
 import android.opengl.Matrix
+import android.os.Build
+import android.os.Handler
 import android.view.Surface
 import com.framecut.ui.core.NormalizedRegion
 import java.nio.ByteBuffer
@@ -72,7 +74,7 @@ class GlRegionCropRenderer(
         texCoordBuffer.position(0)
     }
 
-    fun prepare(): Surface {
+    fun prepare(callbackHandler: Handler? = null): Surface {
         eglDisplay = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
         check(eglDisplay != EGL14.EGL_NO_DISPLAY) { "Unable to get EGL14 display" }
 
@@ -127,7 +129,11 @@ class GlRegionCropRenderer(
 
         val st = SurfaceTexture(oesTextureId)
         st.setDefaultBufferSize(displayWidth, displayHeight)
-        st.setOnFrameAvailableListener { onFrameSignal() }
+        if (callbackHandler != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            st.setOnFrameAvailableListener({ onFrameSignal() }, callbackHandler)
+        } else {
+            st.setOnFrameAvailableListener { onFrameSignal() }
+        }
         surfaceTexture = st
         val surf = Surface(st)
         inputSurface = surf

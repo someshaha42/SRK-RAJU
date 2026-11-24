@@ -24,6 +24,7 @@ import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Process
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.Surface
@@ -31,6 +32,7 @@ import android.view.WindowManager
 import androidx.core.content.ContextCompat
 import com.framecut.ui.core.AudioSourceOption
 import com.framecut.ui.core.BitrateModeOption
+import com.framecut.ui.core.ColorDepthOption
 import com.framecut.ui.core.ColorRangeOption
 import com.framecut.ui.core.NormalizedRegion
 import com.framecut.ui.core.OrientationMode
@@ -95,8 +97,12 @@ class ScreenCaptureEngine(
     private var pauseStartNs = 0L
     private val pausedAccumulatedNs = AtomicLong(0L)
     private var renderedVideoFrames = 0L
+    private var lastDrawnFrameNs = 0L
     private var lastVideoPtsUs = -1L
     private var lastAudioPtsUs = -1L
+
+    private val targetFps: Int = (settings.customVideoFps ?: settings.videoFps.fps).coerceIn(15, 120)
+    private val minFrameIntervalNs: Long = ((1_000_000_000L / targetFps) * 80L) / 100L
 
     private var tempOutputFile: File? = null
     private var targetWidth = 1080
@@ -148,7 +154,7 @@ class ScreenCaptureEngine(
         muxer = MediaMuxer(tempFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
 
         val encoderInputSurface = configuredVideo.inputSurface
-        val thread = HandlerThread("FrameCutGLThread").also { it.start() }
+        val thread = HandlerThread("FrameCutGLThread", Process.THREAD_PRIORITY_DISPLAY).also { it.start() }
         glThread = thread
         val handler = Handler(thread.looper)
         glHandler = handler
@@ -157,6 +163,7 @@ class ScreenCaptureEngine(
         isPaused.set(false)
         startElapsedNs = SystemClock.elapsedRealtimeNanos()
         pausedAccumulatedNs.set(0L)
+        lastDrawnFrameNs = 0L
 
         val glReadyLatch = CountDownLatch(1)
         var virtualInputSurface: Surface? = null
@@ -171,7 +178,7 @@ class ScreenCaptureEngine(
                     region = region,
                     onFrameSignal = { scheduleGlDraw() },
                 )
-                virtualInputSurface = renderer.prepare()
+                virtualInputSurface = renderer.prepare(callbackHandler = handler)
                 renderer.setViewport(targetWidth, targetHeight)
                 glRenderer = renderer
             } catch (t: Throwable) {
@@ -281,10 +288,13 @@ class ScreenCaptureEngine(
                 while (pendingGlFrames.getAndSet(0) > 0) {
                     val renderer = glRenderer ?: break
                     runCatching {
-                        if (!isRunning.get() || isPaused.get()) {
+                        val nowNs = currentAdjustedPtsNs()
+                        val shouldPaceSkip = renderedVideoFrames > 0L && (nowNs - lastDrawnFrameNs) < minFrameIntervalNs
+                        if (!isRunning.get() || isPaused.get() || shouldPaceSkip) {
                             renderer.updateTexImageOnly()
                         } else {
-                            renderer.drawFrame(currentAdjustedPtsNs(), updateTex = true)
+                            lastDrawnFrameNs = nowNs
+                            renderer.drawFrame(nowNs, updateTex = true)
                             renderedVideoFrames++
                         }
                     }
@@ -299,6 +309,7 @@ class ScreenCaptureEngine(
     }
 
     private fun drainVideoEncoderLoop() {
+        Process.setThreadPriority(Process.THREAD_PRIORITY_MORE_FAVORABLE)
         val encoder = videoEncoder ?: return
         val bufferInfo = MediaCodec.BufferInfo()
         var eosSeen = false
@@ -439,6 +450,7 @@ class ScreenCaptureEngine(
     }
 
     private fun captureAudioLoop() {
+        Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
         val record = audioRecord ?: return
         val encoder = audioEncoder ?: return
         val pcmBuffer = ByteArray(4096)
@@ -479,6 +491,7 @@ class ScreenCaptureEngine(
     }
 
     private fun drainAudioEncoderLoop() {
+        Process.setThreadPriority(Process.THREAD_PRIORITY_MORE_FAVORABLE)
         val encoder = audioEncoder ?: return
         val bufferInfo = MediaCodec.BufferInfo()
         var eosSeen = false
@@ -609,6 +622,17 @@ class ScreenCaptureEngine(
                     MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR
                 }
                 setInteger(MediaFormat.KEY_BITRATE_MODE, bitrateMode)
+                if (mime == MediaFormat.MIMETYPE_VIDEO_HEVC && settings.colorDepth == ColorDepthOption.BIT_10) {
+                    val codecCaps = runCatching { encoderInfo.getCapabilitiesForType(mime) }.getOrNull()
+                    val supportsMain10 = codecCaps?.profileLevels?.any {
+                        it.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10
+                    } == true
+                    if (supportsMain10) {
+                        setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10)
+                    } else if (startupWarning == null) {
+                        startupWarning = "10-Bit HEVC profile unavailable on this GPU; recorded in 8-Bit."
+                    }
+                }
             }
 
             try {
