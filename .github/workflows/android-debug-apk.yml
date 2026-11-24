@@ -3,12 +3,10 @@ name: Build Android Debug APK
 on:
   push:
     branches:
-      - main
-      - master
+      - "**"
   pull_request:
     branches:
-      - main
-      - master
+      - "**"
   workflow_dispatch:
     inputs:
       run_tests:
@@ -33,6 +31,18 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Detect Android project root
+        id: detect
+        run: |
+          if [ -f "FrameCutUI/settings.gradle.kts" ]; then
+            echo "project_dir=FrameCutUI" >> "$GITHUB_OUTPUT"
+          elif [ -f "settings.gradle.kts" ] || [ -f "settings.gradle" ]; then
+            echo "project_dir=." >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Could not find settings.gradle.kts in repository root or FrameCutUI/."
+            exit 1
+          fi
 
       - name: Set up Temurin Java 17
         uses: actions/setup-java@v4
@@ -74,64 +84,92 @@ jobs:
           fi
 
       - name: Verify project modules and wrapper
-        working-directory: FrameCutUI
+        working-directory: ${{ steps.detect.outputs.project_dir }}
         run: |
-          chmod +x gradlew
-          ./gradlew --version --no-daemon
-          ./gradlew projects --no-daemon
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew --version --no-daemon
+            ./gradlew projects --no-daemon
+          else
+            gradle --version --no-daemon
+            gradle projects --no-daemon
+          fi
 
       - name: Run unit tests
         if: ${{ inputs.run_tests == true }}
-        working-directory: FrameCutUI
-        run: ./gradlew testDebugUnitTest --stacktrace --no-daemon
+        working-directory: ${{ steps.detect.outputs.project_dir }}
+        run: |
+          if [ -f "./gradlew" ]; then
+            ./gradlew testDebugUnitTest --stacktrace --no-daemon
+          else
+            gradle testDebugUnitTest --stacktrace --no-daemon
+          fi
 
       - name: Build debug APK
-        working-directory: FrameCutUI
-        run: ./gradlew :app:assembleDebug --stacktrace --no-daemon --parallel --build-cache
+        working-directory: ${{ steps.detect.outputs.project_dir }}
+        run: |
+          if [ -f "./gradlew" ]; then
+            ./gradlew :app:assembleDebug --stacktrace --no-daemon --parallel --build-cache
+          else
+            gradle :app:assembleDebug --stacktrace --no-daemon --parallel --build-cache
+          fi
 
       - name: Verify debug APK
-        working-directory: FrameCutUI
+        id: verify_apk
+        working-directory: ${{ steps.detect.outputs.project_dir }}
         run: |
-          APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
-          test -s "$APK_PATH"
-          ls -lh "$APK_PATH"
+          APK_FILE="$(find app/build/outputs/apk -type f -name '*.apk' | head -n 1)"
+          if [ -z "$APK_FILE" ] || [ ! -s "$APK_FILE" ]; then
+            echo "::error::No non-empty APK was generated under app/build/outputs/apk/."
+            find app/build/outputs -maxdepth 4 2>/dev/null || true
+            exit 1
+          fi
+          FULL_APK_PATH="${{ steps.detect.outputs.project_dir }}/$APK_FILE"
+          FULL_APK_PATH="${FULL_APK_PATH#./}"
+          echo "apk_path=$FULL_APK_PATH" >> "$GITHUB_OUTPUT"
+          echo "apk_name=$(basename "$APK_FILE")" >> "$GITHUB_OUTPUT"
+          ls -lh "$APK_FILE"
 
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: framecut-debug-apk
-          path: FrameCutUI/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ steps.verify_apk.outputs.apk_path }}
           if-no-files-found: error
 
       - name: Prepare APK release asset
         if: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.publish_release == true) }}
         run: |
           mkdir -p release-assets
-          cp FrameCutUI/app/build/outputs/apk/debug/app-debug.apk \
-            "release-assets/FrameCut-debug-build-${{ github.run_number }}.apk"
-          ls -lh release-assets/
+          ASSET_NAME="FrameCut-debug-build-${{ github.run_number }}.apk"
+          cp "${{ steps.verify_apk.outputs.apk_path }}" "release-assets/$ASSET_NAME"
+          echo "ASSET_NAME=$ASSET_NAME" >> "$GITHUB_ENV"
+          ls -lh "release-assets/$ASSET_NAME"
 
       - name: Publish APK to GitHub Releases
         if: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.publish_release == true) }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG_NAME="debug-build-${{ github.run_number }}"
-          ASSET_FILE="release-assets/FrameCut-debug-build-${{ github.run_number }}.apk"
+          TAG_NAME="debug-build-${{ github.run_number }}-${{ github.run_attempt }}"
+          ASSET_FILE="release-assets/$ASSET_NAME"
           gh release create "$TAG_NAME" "$ASSET_FILE" \
+            --target "${{ github.sha }}" \
             --title "FrameCut Debug APK #${{ github.run_number }}" \
-            --notes "Automated Debug APK build (AGP 9.1.1, Gradle 9.3.1, Kotlin 2.2.10, JDK 17)." \
-            --prerelease
+            --notes "Branch: ${{ github.ref_name }} | AGP 9.1.1, Gradle 9.3.1, Kotlin 2.2.10, JDK 17" \
+            --prerelease || gh release upload "$TAG_NAME" "$ASSET_FILE" --clobber
 
       - name: Report APK download result
         if: always()
         run: |
           {
             echo "## FrameCut Debug APK Build Summary"
+            echo "- **Branch:** \`${{ github.ref_name }}\`"
             echo "- **Build Status:** ${{ job.status }}"
             echo "- **Toolchain:** AGP 9.1.1 | Gradle 9.3.1 | Kotlin 2.2.10 | JDK 17"
-            echo "- **Artifact:** \`framecut-debug-apk\` (\`FrameCutUI/app/build/outputs/apk/debug/app-debug.apk\`)"
+            echo "- **APK Path:** \`${{ steps.verify_apk.outputs.apk_path }}\`"
+            echo "- **Artifact:** \`framecut-debug-apk\`"
             if [ "${{ github.event_name }}" != "pull_request" ] && { [ "${{ github.event_name }}" != "workflow_dispatch" ] || [ "${{ inputs.publish_release }}" = "true" ]; }; then
-              echo "- **GitHub Release Tag:** \`debug-build-${{ github.run_number }}\` (downloadable directly from Releases in the GitHub app)"
+              echo "- **Release Tag:** \`debug-build-${{ github.run_number }}-${{ github.run_attempt }}\`"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
