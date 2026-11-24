@@ -1,13 +1,17 @@
 package com.framecut.app
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.framecut.ui.core.AudioFormatOption
 import com.framecut.ui.core.AudioSourceOption
 import com.framecut.ui.core.BitrateModeOption
 import com.framecut.ui.core.ColorDepthOption
 import com.framecut.ui.core.ColorRangeOption
-import com.framecut.ui.core.CropMediaCategory
 import com.framecut.ui.core.FrameCutUiState
 import com.framecut.ui.core.GopIntervalOption
 import com.framecut.ui.core.NormalizedRegion
@@ -15,140 +19,86 @@ import com.framecut.ui.core.OrientationMode
 import com.framecut.ui.core.RecordedVideoItem
 import com.framecut.ui.core.RecordingMode
 import com.framecut.ui.core.RecordingPhase
-import com.framecut.ui.core.RecordingSessionState
 import com.framecut.ui.core.RecordingSettings
 import com.framecut.ui.core.RegionAnimationOption
 import com.framecut.ui.core.VideoBitrateOption
 import com.framecut.ui.core.VideoFpsOption
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-class FrameCutViewModel : ViewModel() {
+class FrameCutViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val _uiState = MutableStateFlow(FrameCutUiState())
+    private val appContext = application.applicationContext
+    private val settingsRepository = SettingsRepository(appContext)
+    val recordingsRepository = RecordingsRepository(appContext)
+    private val cropEngine = CropEngine(appContext)
+
+    private val _uiState = MutableStateFlow(
+        FrameCutUiState(
+            settings = settingsRepository.load(),
+            hasOverlayPermission = Settings.canDrawOverlays(appContext),
+        ),
+    )
     val uiState: StateFlow<FrameCutUiState> = _uiState.asStateFlow()
 
-    private var timerJob: Job? = null
+    private var selectedCropUri: Uri? = null
 
-    fun toggleTheme(systemIsDark: Boolean) {
-        updateSettings { settings ->
-            val currentDark = settings.darkThemeOverride ?: systemIsDark
-            settings.copy(darkThemeOverride = !currentDark)
+    init {
+        viewModelScope.launch {
+            RecordingController.session.collect { session ->
+                _uiState.update { state -> state.copy(session = session) }
+            }
+        }
+        viewModelScope.launch {
+            RecordingController.recordingsChanged.collect {
+                refreshRecordings()
+            }
+        }
+        refreshRecordings()
+    }
+
+    fun refreshOverlayPermission() {
+        val granted = Settings.canDrawOverlays(appContext)
+        _uiState.update { it.copy(hasOverlayPermission = granted) }
+    }
+
+    fun refreshRecordings() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingRecordings = true) }
+            val loaded = runCatching { recordingsRepository.loadRecordings() }.getOrDefault(emptyList())
+            _uiState.update { it.copy(recordings = loaded, isLoadingRecordings = false) }
         }
     }
 
-    fun startRecording() {
-        val current = _uiState.value
-        if (!current.isIdle) return
-
-        val width = if (current.settings.recordingMode == RecordingMode.FULL_SCREEN) {
-            current.canvasWidthPx
-        } else {
-            current.selectedPixelRegion.width
-        }
-        val height = if (current.settings.recordingMode == RecordingMode.FULL_SCREEN) {
-            current.canvasHeightPx
-        } else {
-            current.selectedPixelRegion.height
-        }
-        val audioLabel = if (current.settings.audioSource == AudioSourceOption.INTERNAL) {
-            "Internal Audio"
-        } else {
-            "Microphone"
-        }
-
-        _uiState.update { state ->
-            state.copy(
-                session = RecordingSessionState(
-                    phase = RecordingPhase.RECORDING,
-                    elapsedMillis = 0L,
-                    activeResolutionLabel = "${width}×${height}",
-                    activeAudioLabel = audioLabel,
-                    lastSavedName = state.session.lastSavedName,
-                ),
-            )
-        }
-        startTimerLoop()
+    fun startRecordingWithProjection(resultCode: Int, data: Intent) {
+        if (!_uiState.value.isIdle) return
+        settingsRepository.save(_uiState.value.settings)
+        val serviceIntent = ScreenRecordService.createStartIntent(appContext, resultCode, data)
+        ContextCompat.startForegroundService(appContext, serviceIntent)
     }
 
     fun pauseOrResumeRecording() {
-        val phase = _uiState.value.session.phase
-        when (phase) {
-            RecordingPhase.RECORDING -> {
-                timerJob?.cancel()
-                timerJob = null
-                _uiState.update { state ->
-                    state.copy(session = state.session.copy(phase = RecordingPhase.PAUSED))
-                }
-            }
-            RecordingPhase.PAUSED -> {
-                _uiState.update { state ->
-                    state.copy(session = state.session.copy(phase = RecordingPhase.RECORDING))
-                }
-                startTimerLoop()
-            }
+        when (_uiState.value.session.phase) {
+            RecordingPhase.RECORDING -> ScreenRecordService.sendAction(appContext, ScreenRecordService.ACTION_PAUSE)
+            RecordingPhase.PAUSED -> ScreenRecordService.sendAction(appContext, ScreenRecordService.ACTION_RESUME)
             else -> Unit
         }
     }
 
     fun stopRecording() {
-        val snapshot = _uiState.value
-        if (snapshot.session.phase != RecordingPhase.RECORDING &&
-            snapshot.session.phase != RecordingPhase.PAUSED
-        ) {
-            return
+        val phase = _uiState.value.session.phase
+        if (phase == RecordingPhase.RECORDING || phase == RecordingPhase.PAUSED) {
+            ScreenRecordService.sendAction(appContext, ScreenRecordService.ACTION_STOP)
         }
+    }
 
-        timerJob?.cancel()
-        timerJob = null
-
-        _uiState.update { state ->
-            state.copy(session = state.session.copy(phase = RecordingPhase.FINALIZING))
-        }
-
-        viewModelScope.launch {
-            delay(350L)
-            val nowSec = System.currentTimeMillis() / 1000L
-            val fileName = "FrameCut_$nowSec.mp4"
-            val width = if (snapshot.settings.recordingMode == RecordingMode.FULL_SCREEN) {
-                snapshot.canvasWidthPx
-            } else {
-                snapshot.selectedPixelRegion.width
-            }
-            val height = if (snapshot.settings.recordingMode == RecordingMode.FULL_SCREEN) {
-                snapshot.canvasHeightPx
-            } else {
-                snapshot.selectedPixelRegion.height
-            }
-            val durationMs = snapshot.session.elapsedMillis.coerceAtLeast(1000L)
-            val estimatedBytes = ((durationMs / 1000.0) * 1_500_000.0).toLong().coerceAtLeast(250_000L)
-
-            val newItem = RecordedVideoItem(
-                id = nowSec,
-                displayName = fileName,
-                width = width,
-                height = height,
-                durationMs = durationMs,
-                sizeBytes = estimatedBytes,
-                dateAddedSec = nowSec,
-            )
-
-            _uiState.update { state ->
-                state.copy(
-                    recordings = listOf(newItem) + state.recordings,
-                    session = RecordingSessionState(
-                        phase = RecordingPhase.IDLE,
-                        elapsedMillis = 0L,
-                        lastSavedName = fileName,
-                    ),
-                )
-            }
+    fun toggleTheme(systemIsDark: Boolean) {
+        updateSettings { settings ->
+            val currentDark = settings.darkThemeOverride ?: systemIsDark
+            settings.copy(darkThemeOverride = !currentDark)
         }
     }
 
@@ -191,14 +141,8 @@ class FrameCutViewModel : ViewModel() {
         updateSettings { it.copy(selectedRegion = region.normalized()) }
     }
 
-    fun toggleOverlayPermission() {
-        if (!_uiState.value.isIdle) return
-        _uiState.update { state ->
-            state.copy(hasOverlayPermission = !state.hasOverlayPermission)
-        }
-    }
-
     fun dismissMessages() {
+        RecordingController.clearMessages()
         _uiState.update { state ->
             state.copy(
                 recoveryNotice = null,
@@ -278,53 +222,53 @@ class FrameCutViewModel : ViewModel() {
     }
 
     fun deleteRecording(item: RecordedVideoItem) {
-        _uiState.update { state ->
-            state.copy(recordings = state.recordings.filterNot { it.id == item.id })
-        }
-    }
-
-    fun notifyInfo(message: String) {
-        _uiState.update { state ->
-            state.copy(recoveryNotice = message)
-        }
-    }
-
-    fun onCropMediaPicked(category: CropMediaCategory) {
-        notifyInfo("Selected ${category.label} media source for cropping.")
-    }
-
-    fun onCropExportRequested(region: NormalizedRegion, qualityPercent: Int, preserveMetadata: Boolean) {
-        val status = if (region.isFullFrame()) "1:1 stream copy" else "cropped export"
-        val metaLabel = if (preserveMetadata) "EXIF preserved" else "EXIF stripped"
-        notifyInfo("Queued $status at $qualityPercent% ($metaLabel).")
-    }
-
-    private inline fun updateSettings(transform: (RecordingSettings) -> RecordingSettings) {
-        _uiState.update { state -> state.copy(settings = transform(state.settings)) }
-    }
-
-    private fun startTimerLoop() {
-        timerJob?.cancel()
-        timerJob = viewModelScope.launch {
-            while (isActive) {
-                delay(250L)
-                _uiState.update { state ->
-                    if (state.session.phase == RecordingPhase.RECORDING) {
-                        state.copy(
-                            session = state.session.copy(
-                                elapsedMillis = state.session.elapsedMillis + 250L,
-                            ),
-                        )
-                    } else {
-                        state
-                    }
-                }
+        viewModelScope.launch {
+            val deleted = recordingsRepository.deleteRecording(item)
+            if (deleted) {
+                refreshRecordings()
+            } else {
+                notifyInfo("Unable to delete ${item.displayName}.")
             }
         }
     }
 
-    override fun onCleared() {
-        timerJob?.cancel()
-        super.onCleared()
+    fun notifyInfo(message: String) {
+        _uiState.update { state -> state.copy(recoveryNotice = message) }
+    }
+
+    fun setSelectedCropUri(uri: Uri) {
+        selectedCropUri = uri
+        notifyInfo("Loaded media ready to crop and export.")
+    }
+
+    fun exportCroppedMedia(
+        region: NormalizedRegion,
+        qualityPercent: Int,
+        preserveMetadata: Boolean,
+        onCompleted: (String) -> Unit,
+    ) {
+        val uri = selectedCropUri
+        if (uri == null) {
+            onCompleted("Pick a photo or video first using Pick Media or Browse Files.")
+            return
+        }
+
+        viewModelScope.launch {
+            runCatching {
+                cropEngine.exportMedia(uri, region, qualityPercent, preserveMetadata)
+            }.onSuccess { result ->
+                onCompleted(result.summary)
+            }.onFailure { err ->
+                onCompleted("Export failed: ${err.message ?: "Unknown error"}")
+            }
+        }
+    }
+
+    private inline fun updateSettings(transform: (RecordingSettings) -> RecordingSettings) {
+        _uiState.update { state ->
+            val updated = transform(state.settings)
+            settingsRepository.save(updated)
+            state.copy(settings = updated)
+        }
     }
 }
